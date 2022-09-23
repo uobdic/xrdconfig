@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import difflib
 import fileinput
 import shutil
 from pathlib import Path
@@ -9,6 +10,15 @@ import typer
 from plumbum import CommandNotFound, local
 
 app = typer.Typer()
+
+
+def _get_cconfig() -> local:
+    try:
+        cconfig = local.get("cconfig")
+    except CommandNotFound as error:
+        typer.echo("cconfig not found - please make sure xrootd is installed", err=True)
+        raise typer.Exit(1) from error
+    return cconfig
 
 
 def _copy_to_temporary_directory(config_path: Path, copy_to: Path) -> None:
@@ -42,7 +52,7 @@ def _process_cconfig_output(output: str) -> dict[str, str]:
     """Process the output of the cconfig command"""
     result = {}
     for line in output.splitlines():
-        if line.startswith("Config continuing with"):
+        if line.startswith("Config continuing with") or line.startswith("continue "):
             continue
         try:
             var, value = line.split(" ", 1)
@@ -60,12 +70,7 @@ def display(
     output_type: str = typer.Option("plain|json", "--output", "-o"),
 ) -> None:
     """Display the current configuration"""
-    typer.echo("Displaying the current configuration")
-    try:
-        cconfig = local.get("cconfig")
-    except CommandNotFound as error:
-        typer.echo("cconfig not found - please make sure xrootd is installed", err=True)
-        raise typer.Exit(1) from error
+    cconfig = _get_cconfig()
 
     # copy the config and config.d files to a temporary directory
     # replace the continue statement in the config file with temporary directory
@@ -89,13 +94,43 @@ def display(
 
 @app.command()
 def diff(
-    config_path: str = typer.Argument("/etc/xrootd/xrootd-clustered.cfg"),
-    config_path2: str = typer.Argument("/etc/xrootd/xrootd-clustered.cfg"),
+    config1: str = typer.Argument("/etc/xrootd/xrootd-clustered.cfg"),
+    config2: str = typer.Argument("/etc/xrootd/xrootd-clustered.cfg"),
 ) -> None:
     """Display the differences between the current configuration and the last saved version"""
-    typer.echo(
-        "Displaying the differences between the current configuration and the last saved version"
+    # https://stackoverflow.com/questions/19120489/compare-two-files-report-difference-in-python
+    cconfig = _get_cconfig()
+    config_path1: Path = local.path(config1)
+    config_path2: Path = local.path(config2)
+    copy_to_1 = local.path("/tmp/xrdconfig_diff1")
+    copy_to_2 = local.path("/tmp/xrdconfig_diff2")
+
+    _copy_to_temporary_directory(config_path1, copy_to_1)
+    _copy_to_temporary_directory(config_path2, copy_to_2)
+    _replace_continue_statement(config_path1, copy_to_1)
+    _replace_continue_statement(config_path2, copy_to_2)
+
+    _, _, stderr1 = cconfig["-c"].run(copy_to_1 / config_path1.name)
+    _, _, stderr2 = cconfig["-c"].run(copy_to_2 / config_path2.name)
+    result1 = _process_cconfig_output(stderr1)
+    result2 = _process_cconfig_output(stderr2)
+    plain_lines1 = [value for _, value in sorted(result1.items())]
+    plain_lines2 = [value for _, value in sorted(result2.items())]
+
+    diff = list(
+        difflib.unified_diff(
+            plain_lines1, plain_lines2, fromfile=config1, tofile=config2, n=0
+        )
     )
+    if not diff:
+        typer.echo("No differences found")
+    else:
+        typer.echo("\n".join(diff))
+
+
+@app.command()
+def remote_diff() -> None:
+    typer.echo("Not implemented yet")
 
 
 def main() -> Any:

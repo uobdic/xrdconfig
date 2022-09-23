@@ -1,3 +1,4 @@
+"""Command Line Interface entry point for xrdconfig"""
 from __future__ import annotations
 
 import difflib
@@ -117,12 +118,12 @@ def diff(
     plain_lines1 = [value for _, value in sorted(result1.items())]
     plain_lines2 = [value for _, value in sorted(result2.items())]
 
-    diff = list(
+    diff_list = list(
         difflib.unified_diff(
             plain_lines1, plain_lines2, fromfile=config1, tofile=config2, n=0
         )
     )
-    if not diff:
+    if not diff_list:
         typer.echo("No differences found")
     else:
         typer.echo("\n".join(diff))
@@ -130,6 +131,7 @@ def diff(
 
 @app.command()
 def remote_diff() -> None:
+    """Same as diff but for remote files"""
     typer.echo("Not implemented yet")
 
 
